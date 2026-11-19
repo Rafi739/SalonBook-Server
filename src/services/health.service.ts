@@ -1,8 +1,8 @@
-import { getDatabaseConnectionStatus } from "../config/database.js";
+import { pingDatabaseConnection } from "../config/database.js";
 import type { HealthResponse } from "../types/health.js";
 
-export function getHealthStatus(): HealthResponse {
-  const database = getDatabaseConnectionStatus();
+export async function getHealthStatus(): Promise<HealthResponse> {
+  const database = await pingDatabaseConnection();
 
   return {
     status: database === "connected" ? "ok" : "degraded",

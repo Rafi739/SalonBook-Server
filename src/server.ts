@@ -1,11 +1,12 @@
 import { app } from "./app.js";
-import { closeDatabaseConnection, connectToDatabase } from "./config/database.js";
+import { getDatabaseCollections } from "./config/collections.js";
+import { closeDatabaseConnection } from "./config/database.js";
 import { config } from "./config/env.js";
 
 const server = app.listen(config.port, () => {
   console.log(`SalonBook API listening on port ${config.port} (${config.nodeEnv}).`);
-  void connectToDatabase().catch((error: unknown) => {
-    console.error("MongoDB connection failed:", error);
+  void getDatabaseCollections().catch((error: unknown) => {
+    console.error("MongoDB initialization failed:", error);
   });
 });
 

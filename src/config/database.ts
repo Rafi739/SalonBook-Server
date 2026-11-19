@@ -6,6 +6,7 @@ export type DatabaseConnectionStatus = "disconnected" | "connecting" | "connecte
 let client: MongoClient | null = null;
 let connectionPromise: Promise<Db> | null = null;
 let connectionStatus: DatabaseConnectionStatus = "disconnected";
+let healthCheckPromise: Promise<DatabaseConnectionStatus> | null = null;
 
 export function getDatabaseConnectionStatus(): DatabaseConnectionStatus {
   return connectionStatus;
@@ -23,7 +24,9 @@ export function connectToDatabase(): Promise<Db> {
     return Promise.reject(new Error("MONGODB_DATABASE is not configured."));
   }
 
-  const mongoClient = new MongoClient(config.mongodbUri);
+  const mongoClient = new MongoClient(config.mongodbUri, {
+    serverSelectionTimeoutMS: 5000,
+  });
   client = mongoClient;
   connectionStatus = "connecting";
 
@@ -48,6 +51,32 @@ export function connectToDatabase(): Promise<Db> {
   })();
 
   return connectionPromise;
+}
+
+export function pingDatabaseConnection(): Promise<DatabaseConnectionStatus> {
+  if (connectionStatus === "connecting" || connectionPromise === null) {
+    return Promise.resolve(connectionStatus);
+  }
+  if (healthCheckPromise !== null) {
+    return healthCheckPromise;
+  }
+
+  const currentConnection = connectionPromise;
+  healthCheckPromise = currentConnection
+    .then(async (database) => {
+      await database.command({ ping: 1 });
+      connectionStatus = "connected";
+      return connectionStatus;
+    })
+    .catch(() => {
+      connectionStatus = "disconnected";
+      return connectionStatus;
+    })
+    .finally(() => {
+      healthCheckPromise = null;
+    });
+
+  return healthCheckPromise;
 }
 
 export async function closeDatabaseConnection(): Promise<void> {

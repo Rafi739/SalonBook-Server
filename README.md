@@ -30,11 +30,13 @@ On Windows PowerShell, use `Copy-Item .env.example .env` instead. Set `MONGODB_U
 npm run dev
 ```
 
-The server listens on `PORT` (default `3000`). It attempts the MongoDB connection after startup; a connection failure is logged and does not prevent the HTTP server from starting.
+The server listens on `PORT` (default `3000`). It attempts the MongoDB connection and initializes collection indexes after startup; a connection or initialization failure is logged and does not prevent the HTTP server from starting. Index setup is cached, and failed initialization can be retried by calling the collection access layer.
+
+Application collections are accessed through `getDatabaseCollections()` in `src/config/collections.ts`. The layer provides typed `users`, `services`, `appointments`, and `transactions` collections and creates their indexes once per successful initialization. Better Auth-owned collections are not managed here.
 
 ## API
 
-- `GET /api/health` reports API uptime and MongoDB connection state. It returns `200` when the database is connected and `503` otherwise.
+- `GET /api/health` reports API uptime and MongoDB connection state. It pings MongoDB before reporting it connected, returns `200` when the database is reachable, and `503` otherwise.
 
 ## Build and start
 
