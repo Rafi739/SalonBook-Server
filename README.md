@@ -32,6 +32,78 @@ The frontend should obtain an access JWT from Better Auth and send it to this AP
 
 `GET /api/auth/me` returns the authenticated profile's safe fields (`id`, `name`, `email`, `image`, and database-backed `role`). `requireRole("admin")` and `requireRole("customer")` are available for protecting future routes. Better Auth's own auth collections are separate from SalonBook's application `users` collection. `JWT_SECRET` is not used by this backend.
 
+## User management API
+
+All user-management endpoints require `Authorization: Bearer <Better Auth JWT>`. Customer profile endpoints resolve the target only from the verified request context. Admin endpoints additionally require the user's `admin` role from the MongoDB application profile; role and blocked state are never accepted from the client.
+
+### Customer profile
+
+- `GET /api/users/me` returns the caller's safe profile.
+- `PATCH /api/users/me` updates only `name` and/or `image`. Names must be 1–100 characters after trimming; images must be valid HTTP or HTTPS URLs. Other fields, including email, role, and blocked state, are rejected.
+
+Example response:
+
+```json
+{
+  "user": {
+    "id": "<object-id>",
+    "name": "<name>",
+    "email": "<email>",
+    "image": "https://example.com/profile-image",
+    "role": "customer",
+    "createdAt": "<ISO-8601 timestamp>"
+  }
+}
+```
+
+### Admin user management
+
+- `GET /api/users` lists users with pagination and optional filters.
+- `GET /api/users/:id` returns one user; `:id` must be a MongoDB ObjectId.
+- `PATCH /api/users/:id/block` blocks a customer.
+- `PATCH /api/users/:id/unblock` unblocks a customer.
+
+List query parameters:
+
+- `page` (default `1`) and `limit` (default `20`, maximum `100`).
+- `search` searches name and email (maximum 100 characters).
+- `role`: `customer` or `admin`.
+- `blocked`: `true` or `false`.
+- `sortBy`: `name`, `email`, or `createdAt` (default `createdAt`).
+- `sortOrder`: `asc` or `desc` (default `desc`).
+
+Example request: `GET /api/users?page=2&limit=20&search=alex&role=customer&blocked=false&sortBy=createdAt&sortOrder=desc`
+
+The list response contains `users` with safe profile fields plus `isBlocked`, and `pagination` with `page`, `limit`, `total`, `totalPages`, `hasNextPage`, and `hasPreviousPage`. Admins cannot block themselves or another admin; repeated block/unblock operations return `409 Conflict`.
+
+Example admin list response:
+
+```json
+{
+  "users": [
+    {
+      "id": "<object-id>",
+      "name": "<name>",
+      "email": "<email>",
+      "image": "https://example.com/profile-image",
+      "role": "customer",
+      "createdAt": "<ISO-8601 timestamp>",
+      "isBlocked": false
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "totalPages": 1,
+    "hasNextPage": false,
+    "hasPreviousPage": false
+  }
+}
+```
+
+Invalid IDs, filters, pagination, sorting, or profile updates return `400`; missing/invalid authentication returns `401`; blocked users or insufficient permissions return `403`; missing users return `404`; repeated block-state changes return `409`.
+
 ## Development
 
 ```sh
@@ -46,6 +118,9 @@ Application collections are accessed through `getDatabaseCollections()` in `src/
 
 - `GET /api/health` reports API uptime and MongoDB connection state. It pings MongoDB before reporting it connected, returns `200` when the database is reachable, and `503` otherwise.
 - `GET /api/auth/me` returns the current application profile and requires a valid Better Auth JWT.
+- `GET` and `PATCH /api/users/me` manage the authenticated customer's profile.
+- `GET /api/users` and `GET /api/users/:id` are admin-only user listing and lookup endpoints.
+- `PATCH /api/users/:id/block` and `PATCH /api/users/:id/unblock` are admin-only customer account actions.
 
 Authentication environment variables:
 
