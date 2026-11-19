@@ -30,4 +30,7 @@ export const config = {
   clientUrl: process.env.CLIENT_URL ?? "http://localhost:5173",
   mongodbUri: process.env.MONGODB_URI,
   mongodbDatabase: process.env.MONGODB_DATABASE,
+  betterAuthJwksUrl: process.env.BETTER_AUTH_JWKS_URL,
+  betterAuthIssuer: process.env.BETTER_AUTH_ISSUER,
+  betterAuthAudience: process.env.BETTER_AUTH_AUDIENCE,
 };
