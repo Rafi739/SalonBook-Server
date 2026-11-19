@@ -1,6 +1,8 @@
-import { ObjectId } from "mongodb";
+import type { ObjectId } from "mongodb";
 import type { UserRole } from "../types/database.js";
 import { HttpError } from "../utils/http-error.js";
+import { parseMongoObjectId } from "../utils/mongo-id.js";
+import { isRecord, parsePositiveInteger } from "./common.validators.js";
 
 export interface ProfileUpdate {
   name?: string;
@@ -33,10 +35,6 @@ const allowedListQueryFields = new Set([
 const maximumPageSize = 100;
 const maximumOffset = 1_000_000;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function readQueryString(query: Record<string, unknown>, key: string): string | undefined {
   const value = query[key];
   if (value === undefined) {
@@ -46,21 +44,6 @@ function readQueryString(query: Record<string, unknown>, key: string): string | 
     throw new HttpError(400, "Bad Request", `Query parameter "${key}" must be a single string.`);
   }
   return value;
-}
-
-function parsePositiveInteger(value: string | undefined, field: string, fallback: number): number {
-  if (value === undefined) {
-    return fallback;
-  }
-  if (!/^[0-9]+$/.test(value)) {
-    throw new HttpError(400, "Bad Request", `Query parameter "${field}" must be a positive integer.`);
-  }
-
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new HttpError(400, "Bad Request", `Query parameter "${field}" must be a positive integer.`);
-  }
-  return parsed;
 }
 
 export function validateProfileUpdate(value: unknown): ProfileUpdate {
@@ -175,8 +158,5 @@ export function parseUserListQuery(value: unknown): UserListQuery {
 }
 
 export function parseUserObjectId(value: string | undefined): ObjectId {
-  if (value === undefined || !/^[0-9a-fA-F]{24}$/.test(value)) {
-    throw new HttpError(400, "Bad Request", "The user ID must be a valid MongoDB ObjectId.");
-  }
-  return new ObjectId(value);
+  return parseMongoObjectId(value, "user");
 }

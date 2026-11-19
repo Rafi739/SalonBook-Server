@@ -1,4 +1,4 @@
-import { Db, MongoClient } from "mongodb";
+import { Db, MongoClient, type ClientSession } from "mongodb";
 import { config } from "./env.js";
 
 export type DatabaseConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -51,6 +51,29 @@ export function connectToDatabase(): Promise<Db> {
   })();
 
   return connectionPromise;
+}
+
+export async function withDatabaseTransaction(
+  operation: (session: ClientSession) => Promise<void>,
+): Promise<void> {
+  await connectToDatabase();
+  const activeClient = client;
+  if (activeClient === null) {
+    throw new Error("MongoDB client is not available.");
+  }
+
+  const session = activeClient.startSession();
+  try {
+    const transactionCompleted = await session.withTransaction(async () => {
+      await operation(session);
+      return true;
+    });
+    if (transactionCompleted !== true) {
+      throw new Error("MongoDB transaction did not return a result.");
+    }
+  } finally {
+    await session.endSession();
+  }
 }
 
 export function pingDatabaseConnection(): Promise<DatabaseConnectionStatus> {

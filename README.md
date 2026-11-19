@@ -104,6 +104,70 @@ Example admin list response:
 
 Invalid IDs, filters, pagination, sorting, or profile updates return `400`; missing/invalid authentication returns `401`; blocked users or insufficient permissions return `403`; missing users return `404`; repeated block-state changes return `409`.
 
+## Service management API
+
+### Public endpoints
+
+- `GET /api/services` lists active services only.
+- `GET /api/services/:id` returns an active service; malformed IDs return `400`, while missing or inactive services return `404`.
+
+The list accepts `search` (service name), `category` (`Men's`, `Women's`, or `Unisex`), `sort` (`price_asc` or `price_desc`, default `price_asc`), and `page`/`limit` (defaults `1`/`20`, maximum limit `100`). Search is escaped and filters/sorting/pagination are performed in MongoDB.
+
+Example request: `GET /api/services?search=style&category=Unisex&sort=price_asc&page=1&limit=20`
+
+Example list response:
+
+```json
+{
+  "services": [
+    {
+      "id": "<object-id>",
+      "serviceName": "<service-name>",
+      "category": "Unisex",
+      "description": "<description>",
+      "price": 45,
+      "duration": 60,
+      "image": "https://example.com/service-image.jpg",
+      "status": "active",
+      "createdAt": "<ISO-8601 timestamp>",
+      "updatedAt": "<ISO-8601 timestamp>"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "totalPages": 1,
+    "hasNextPage": false,
+    "hasPreviousPage": false
+  }
+}
+```
+
+### Admin endpoints
+
+All service mutations require a Better Auth JWT and the authenticated MongoDB application profile must have role `admin`.
+
+- `POST /api/services` creates a service. `status` defaults to `active`.
+- `PATCH /api/services/:id` updates only supplied service fields.
+- `PATCH /api/services/:id/status` changes only the status.
+- `DELETE /api/services/:id` permanently deletes a service only when no appointment references it.
+
+Example create request:
+
+```json
+{
+  "serviceName": "<service-name>",
+  "category": "Unisex",
+  "description": "<service-description>",
+  "price": 45,
+  "duration": 60,
+  "image": "https://example.com/service-image.jpg"
+}
+```
+
+Example update request: `{"price": 50, "status": "inactive"}`. Status-only request: `{"status": "active"}`. Successful create returns `201` and successful reads/updates return `200`, each with a `service` object containing only the service's public fields and its ID. Delete returns `204`. Invalid service data or list parameters return `400`; unauthorized or non-admin mutations return `401`/`403`; missing or inactive public details return `404`; deletion of a service referenced by appointment history returns `409`. Deletion checks the existing appointment collection inside a MongoDB transaction and never deletes appointments or transactions.
+
 ## Development
 
 ```sh
@@ -121,6 +185,8 @@ Application collections are accessed through `getDatabaseCollections()` in `src/
 - `GET` and `PATCH /api/users/me` manage the authenticated customer's profile.
 - `GET /api/users` and `GET /api/users/:id` are admin-only user listing and lookup endpoints.
 - `PATCH /api/users/:id/block` and `PATCH /api/users/:id/unblock` are admin-only customer account actions.
+- `GET /api/services` and `GET /api/services/:id` are public active-service endpoints.
+- `POST`, `PATCH`, and `DELETE /api/services...` mutation endpoints require an admin JWT.
 
 Authentication environment variables:
 
