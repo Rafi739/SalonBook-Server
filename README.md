@@ -24,6 +24,19 @@ On Windows PowerShell, use `Copy-Item .env.example .env` instead. Set `MONGODB_U
 
 `CLIENT_URL` is the allowed frontend origin for CORS. `JWT_SECRET` is included as a placeholder for later authentication work and is not currently used.
 
+## Stripe configuration
+
+Stripe is optional at server startup so health checks and non-payment APIs remain available when it is not configured. For local testing, add your Stripe **test-mode** secret key (`sk_test_...`), webhook signing secret (`whsec_...`), and a supported three-letter currency such as `usd` to your private `.env`. Never use or commit live secrets in development.
+
+```env
+STRIPE_SECRET_KEY=sk_test_replace_with_your_test_secret
+STRIPE_WEBHOOK_SECRET=whsec_replace_with_your_webhook_secret
+STRIPE_CURRENCY=usd
+CLIENT_URL=http://localhost:5173
+```
+
+Payment endpoints return `503` until both Stripe keys are configured. `CLIENT_URL` supplies the Checkout success/cancel redirect origin.
+
 ## Authentication
 
 Better Auth remains responsible for registration and login in the frontend. Configure its JWT plugin to publish signing keys at `BETTER_AUTH_JWKS_URL` and to issue tokens with a signed `email` claim and a true `email_verified` (or `emailVerified`) claim. Set `BETTER_AUTH_ISSUER` and `BETTER_AUTH_AUDIENCE` to exactly match the claims configured by Better Auth. These three settings are required for protected routes; missing or invalid settings fail closed with `503`.
@@ -230,6 +243,42 @@ Duplicate prevention treats only `pending` and `confirmed` appointments as activ
 
 Invalid inputs return `400`, unauthenticated requests `401`, insufficient permissions `403`, unavailable appointments/services `404`, duplicate bookings, invalid transitions, or referenced-service deletion conflicts `409`.
 
+## Stripe checkout and payment history
+
+### Checkout
+
+- `POST /api/payments/create-checkout-session` requires a customer JWT and accepts only `{"appointmentId":"<appointment-object-id>"}`.
+- Only the authenticated customer's confirmed, unpaid appointment can be checked out. The amount comes from its stored `servicePrice`; client amount, currency, customer ID, and payment status fields are rejected.
+- A pending database transaction reserves the checkout attempt. The transaction ID is used as Stripe's idempotency key and an existing open Checkout session is returned on repeat requests.
+- The response contains only `sessionId` and `url`. Visiting the frontend success URL does not change payment state.
+
+Example request:
+
+```json
+{
+  "appointmentId": "<confirmed-appointment-object-id>"
+}
+```
+
+### Transaction history
+
+- `GET /api/payments/me?page=1&limit=20` requires a customer JWT and returns only that customer's transactions, newest first.
+- `GET /api/payments?page=1&limit=20&status=completed&dateFrom=2026-01-01&dateTo=2026-12-31` requires an admin JWT and supports status and date filters.
+
+Transaction responses expose only transaction ID, appointment ID, amount, currency, status, and creation time. Admin results may also include safe customer and appointment summaries. Stripe session IDs and secrets are never returned.
+
+### Webhooks and local testing
+
+Configure Stripe to send Checkout events to `https://<api-host>/api/payments/webhook`; the server verifies the `Stripe-Signature` against `STRIPE_WEBHOOK_SECRET` using the exact raw request body. For local testing, run the Stripe CLI against the local API:
+
+```sh
+stripe listen --forward-to localhost:3000/api/payments/webhook
+```
+
+Copy the CLI's printed `whsec_...` value into local `STRIPE_WEBHOOK_SECRET`. Use Stripe test cards from Stripe's documentation to exercise completed, expired, and (where enabled) asynchronous failed payments. The webhook handles `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, and `checkout.session.async_payment_failed`. It checks the stored session/transaction, appointment/customer metadata, currency, amount, and appointment eligibility before marking an appointment paid. Repeated deliveries are processed idempotently; expired and failed sessions do not mark appointments paid. Only a verified successful webhook can update payment status—the browser redirect is not proof of payment.
+
+MongoDB webhook updates use the existing `withDatabaseTransaction` helper and therefore require a transaction-capable MongoDB deployment (for example, Atlas or a replica set).
+
 ## Development
 
 ```sh
@@ -251,12 +300,17 @@ Application collections are accessed through `getDatabaseCollections()` in `src/
 - `POST`, `PATCH`, and `DELETE /api/services...` mutation endpoints require an admin JWT.
 - `POST /api/appointments` and customer appointment history/detail/cancellation endpoints require authentication.
 - `GET /api/appointments` and `PATCH /api/appointments/:id/status` are admin-only.
+- `POST /api/payments/create-checkout-session` and `GET /api/payments/me` are customer-only.
+- `GET /api/payments` is admin-only; `POST /api/payments/webhook` is public but requires a valid Stripe signature.
 
 Authentication environment variables:
 
 - `BETTER_AUTH_JWKS_URL`: Better Auth's public JWKS endpoint.
 - `BETTER_AUTH_ISSUER`: expected JWT `iss` claim.
 - `BETTER_AUTH_AUDIENCE`: expected JWT `aud` claim.
+- `STRIPE_SECRET_KEY`: Stripe test/live API secret; use a test key for local integration.
+- `STRIPE_WEBHOOK_SECRET`: endpoint or Stripe CLI webhook signing secret.
+- `STRIPE_CURRENCY`: three-letter Checkout currency (defaults to `usd`).
 
 ## Build and start
 

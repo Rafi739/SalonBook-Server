@@ -33,4 +33,7 @@ export const config = {
   betterAuthJwksUrl: process.env.BETTER_AUTH_JWKS_URL,
   betterAuthIssuer: process.env.BETTER_AUTH_ISSUER,
   betterAuthAudience: process.env.BETTER_AUTH_AUDIENCE,
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+  stripeCurrency: process.env.STRIPE_CURRENCY ?? "usd",
 };

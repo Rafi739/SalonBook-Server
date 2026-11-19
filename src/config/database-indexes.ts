@@ -39,6 +39,18 @@ export async function createDatabaseIndexes(collections: DatabaseCollections): P
       { name: "transactions_appointment" },
     ),
     collections.transactions.createIndex(
+      { appointmentId: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { status: "pending" },
+        name: "transactions_pending_appointment_unique",
+      },
+    ),
+    collections.transactions.createIndex(
+      { createdAt: -1 },
+      { name: "transactions_created_at" },
+    ),
+    collections.transactions.createIndex(
       { stripeSessionId: 1 },
       {
         unique: true,
