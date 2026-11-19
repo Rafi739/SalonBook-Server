@@ -168,6 +168,68 @@ Example create request:
 
 Example update request: `{"price": 50, "status": "inactive"}`. Status-only request: `{"status": "active"}`. Successful create returns `201` and successful reads/updates return `200`, each with a `service` object containing only the service's public fields and its ID. Delete returns `204`. Invalid service data or list parameters return `400`; unauthorized or non-admin mutations return `401`/`403`; missing or inactive public details return `404`; deletion of a service referenced by appointment history returns `409`. Deletion checks the existing appointment collection inside a MongoDB transaction and never deletes appointments or transactions.
 
+## Appointment booking API
+
+All appointment endpoints require a Better Auth JWT in `Authorization: Bearer <token>`. Customers are identified by their authenticated MongoDB application profile. Admin-only operations use the existing database-backed `admin` role guard.
+
+### Customer operations
+
+- `POST /api/appointments` is customer-only. The request accepts `serviceId`, `appointmentDate` (`YYYY-MM-DD`), `timeSlot` (`HH:mm`, 24-hour), and optional `message` (up to 1000 characters). Dates are normalized to UTC midnight. The API does not impose salon opening hours or invent available slots.
+- `GET /api/appointments/me` returns the authenticated account's appointment history, newest appointment dates first. It accepts `page`, `limit`, and an optional valid `status`.
+- `GET /api/appointments/:id` lets a customer view only their own appointment; an admin can view any appointment.
+- `PATCH /api/appointments/:id/cancel` lets a customer cancel only their own `pending` appointment. Admins can cancel `pending` or `confirmed` appointments.
+
+Example create request:
+
+```json
+{
+  "serviceId": "<active-service-object-id>",
+  "appointmentDate": "<YYYY-MM-DD>",
+  "timeSlot": "14:30",
+  "message": "<optional note>"
+}
+```
+
+The customer ID is taken from the verified request, and the service price is read from the active MongoDB service. New appointments always have `status: "pending"` and `paymentStatus: "unpaid"`; clients cannot set either value or `servicePrice`.
+
+### Admin operations
+
+- `GET /api/appointments` lists all appointments. It accepts `page`, `limit`, `status`, `paymentStatus`, `dateFrom`, `dateTo`, `sortBy` (`appointmentDate` or `createdAt`), and `sortOrder` (`asc` or `desc`).
+- `PATCH /api/appointments/:id/status` lets admins make only these transitions: `pending` → `confirmed`, `rejected`, or `cancelled`; `confirmed` → `completed` or `cancelled`.
+
+Appointment history responses contain an `appointments` array and `pagination` metadata. Appointment items include the captured `servicePrice`, payment and appointment statuses, and safe service details when available. Admin list/details also include a safe customer summary; authentication fields are never returned.
+
+Example appointment response structure:
+
+```json
+{
+  "appointment": {
+    "id": "<appointment-object-id>",
+    "serviceId": "<service-object-id>",
+    "customerId": "<customer-object-id>",
+    "appointmentDate": "<ISO-8601 UTC date>",
+    "timeSlot": "14:30",
+    "message": "<note>",
+    "servicePrice": 45,
+    "paymentStatus": "unpaid",
+    "status": "pending",
+    "createdAt": "<ISO-8601 timestamp>",
+    "updatedAt": "<ISO-8601 timestamp>",
+    "service": {
+      "id": "<service-object-id>",
+      "serviceName": "<service-name>",
+      "category": "Unisex",
+      "duration": 60,
+      "image": "https://example.com/service-image.jpg"
+    }
+  }
+}
+```
+
+Duplicate prevention treats only `pending` and `confirmed` appointments as active, keyed by customer, normalized date, and time slot. A unique partial MongoDB index prevents concurrent duplicate bookings for the same customer without reserving the slot globally; cancelled, rejected, and completed appointments do not block another booking. Cancellation and admin status changes use conditional updates. No appointment endpoint changes `paymentStatus`; paid status is reserved for a future verified Stripe webhook.
+
+Invalid inputs return `400`, unauthenticated requests `401`, insufficient permissions `403`, unavailable appointments/services `404`, duplicate bookings, invalid transitions, or referenced-service deletion conflicts `409`.
+
 ## Development
 
 ```sh
@@ -187,6 +249,8 @@ Application collections are accessed through `getDatabaseCollections()` in `src/
 - `PATCH /api/users/:id/block` and `PATCH /api/users/:id/unblock` are admin-only customer account actions.
 - `GET /api/services` and `GET /api/services/:id` are public active-service endpoints.
 - `POST`, `PATCH`, and `DELETE /api/services...` mutation endpoints require an admin JWT.
+- `POST /api/appointments` and customer appointment history/detail/cancellation endpoints require authentication.
+- `GET /api/appointments` and `PATCH /api/appointments/:id/status` are admin-only.
 
 Authentication environment variables:
 

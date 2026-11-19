@@ -15,12 +15,24 @@ export async function createDatabaseIndexes(collections: DatabaseCollections): P
       { name: "services_price" },
     ),
     collections.appointments.createIndex(
-      { customerId: 1 },
-      { name: "appointments_customer" },
+      { customerId: 1, appointmentDate: -1, createdAt: -1 },
+      { name: "appointments_customer_history" },
     ),
     collections.appointments.createIndex(
       { appointmentDate: 1, status: 1 },
       { name: "appointments_date_status" },
+    ),
+    collections.appointments.createIndex(
+      { paymentStatus: 1, appointmentDate: -1 },
+      { name: "appointments_payment_date" },
+    ),
+    collections.appointments.createIndex(
+      { customerId: 1, appointmentDate: 1, timeSlot: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { status: { $in: ["pending", "confirmed"] } },
+        name: "appointments_active_customer_slot_unique",
+      },
     ),
     collections.transactions.createIndex(
       { appointmentId: 1 },
