@@ -1,3 +1,4 @@
+
 import { ObjectId, type Filter, type Sort, type WithId } from "mongodb";
 import { getDatabaseCollections } from "../config/collections.js";
 import { withDatabaseTransaction } from "../config/database.js";
@@ -6,6 +7,7 @@ import type { ServiceListResult, ServiceView } from "../types/services.js";
 import type {
   CreateServiceInput,
   PublicServiceListQuery,
+  AdminServiceListQuery,
   UpdateServiceInput,
 } from "../validators/service.validators.js";
 import { HttpError } from "../utils/http-error.js";
@@ -40,7 +42,10 @@ function toServiceView(service: ServiceWithId): ServiceView {
   };
 }
 
-export async function listPublicServices(query: PublicServiceListQuery): Promise<ServiceListResult> {
+// Public: Only active services are visible.
+export async function listPublicServices(
+  query: PublicServiceListQuery,
+): Promise<ServiceListResult> {
   const { services } = await getDatabaseCollections();
   const filter: Filter<ServiceDocument> = { status: "active" };
 
@@ -48,6 +53,7 @@ export async function listPublicServices(query: PublicServiceListQuery): Promise
     const escapedSearch = query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     filter.serviceName = new RegExp(escapedSearch, "i");
   }
+
   if (query.category !== undefined) {
     filter.category = query.category;
   }
@@ -55,6 +61,7 @@ export async function listPublicServices(query: PublicServiceListQuery): Promise
   const direction: 1 | -1 = query.sort === "price_asc" ? 1 : -1;
   const sort: Sort = { price: direction, _id: direction };
   const skip = (query.page - 1) * query.limit;
+
   const [documents, total] = await Promise.all([
     services
       .find(filter, { projection: serviceProjection })
@@ -64,6 +71,7 @@ export async function listPublicServices(query: PublicServiceListQuery): Promise
       .toArray(),
     services.countDocuments(filter),
   ]);
+
   const totalPages = Math.ceil(total / query.limit);
 
   return {
@@ -79,28 +87,87 @@ export async function listPublicServices(query: PublicServiceListQuery): Promise
   };
 }
 
-export async function getPublicServiceById(serviceId: ObjectId): Promise<ServiceView> {
+// Admin: Can view both active and inactive services.
+export async function listAdminServices(
+  query: AdminServiceListQuery,
+): Promise<ServiceListResult> {
   const { services } = await getDatabaseCollections();
+  const filter: Filter<ServiceDocument> = {};
+
+  if (query.status !== undefined) {
+    filter.status = query.status;
+  }
+
+  if (query.search !== undefined) {
+    const escapedSearch = query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.serviceName = new RegExp(escapedSearch, "i");
+  }
+
+  if (query.category !== undefined) {
+    filter.category = query.category;
+  }
+
+  const direction: 1 | -1 = query.sort === "price_asc" ? 1 : -1;
+  const sort: Sort = { price: direction, _id: direction };
+  const skip = (query.page - 1) * query.limit;
+
+  const [documents, total] = await Promise.all([
+    services
+      .find(filter, { projection: serviceProjection })
+      .sort(sort)
+      .skip(skip)
+      .limit(query.limit)
+      .toArray(),
+    services.countDocuments(filter),
+  ]);
+
+  const totalPages = Math.ceil(total / query.limit);
+
+  return {
+    services: documents.map(toServiceView),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      total,
+      totalPages,
+      hasNextPage: query.page < totalPages,
+      hasPreviousPage: query.page > 1 && totalPages > 0,
+    },
+  };
+}
+
+export async function getPublicServiceById(
+  serviceId: ObjectId,
+): Promise<ServiceView> {
+  const { services } = await getDatabaseCollections();
+
   const service = await services.findOne(
     { _id: serviceId, status: "active" },
     { projection: serviceProjection },
   );
+
   if (service === null) {
     throw new HttpError(404, "Not Found", "Service not found.");
   }
+
   return toServiceView(service);
 }
 
-export async function createService(input: CreateServiceInput): Promise<ServiceView> {
+export async function createService(
+  input: CreateServiceInput,
+): Promise<ServiceView> {
   const { services } = await getDatabaseCollections();
   const now = new Date();
+
   const document: ServiceDocument = {
     ...input,
     status: input.status ?? "active",
     createdAt: now,
     updatedAt: now,
   };
+
   const result = await services.insertOne(document);
+
   return toServiceView({ _id: result.insertedId, ...document });
 }
 
@@ -109,32 +176,45 @@ export async function updateService(
   update: UpdateServiceInput,
 ): Promise<ServiceView> {
   const { services } = await getDatabaseCollections();
+
   const result = await services.updateOne(
     { _id: serviceId },
     { $set: { ...update, updatedAt: new Date() } },
   );
+
   if (result.matchedCount === 0) {
     throw new HttpError(404, "Not Found", "Service not found.");
   }
+
   return getServiceById(serviceId);
 }
 
-export async function getServiceById(serviceId: ObjectId): Promise<ServiceView> {
+export async function getServiceById(
+  serviceId: ObjectId,
+): Promise<ServiceView> {
   const { services } = await getDatabaseCollections();
-  const service = await services.findOne({ _id: serviceId }, { projection: serviceProjection });
+
+  const service = await services.findOne(
+    { _id: serviceId },
+    { projection: serviceProjection },
+  );
+
   if (service === null) {
     throw new HttpError(404, "Not Found", "Service not found.");
   }
+
   return toServiceView(service);
 }
 
 export async function deleteService(serviceId: ObjectId): Promise<void> {
   const { services, appointments } = await getDatabaseCollections();
+
   await withDatabaseTransaction(async (session) => {
     const service = await services.findOne(
       { _id: serviceId },
       { session, projection: { _id: 1 } },
     );
+
     if (service === null) {
       throw new HttpError(404, "Not Found", "Service not found.");
     }
@@ -143,6 +223,7 @@ export async function deleteService(serviceId: ObjectId): Promise<void> {
       { serviceId },
       { session, projection: { _id: 1 } },
     );
+
     if (appointment !== null) {
       throw new HttpError(
         409,
@@ -152,6 +233,7 @@ export async function deleteService(serviceId: ObjectId): Promise<void> {
     }
 
     const result = await services.deleteOne({ _id: serviceId }, { session });
+
     if (result.deletedCount !== 1) {
       throw new HttpError(404, "Not Found", "Service not found.");
     }

@@ -23,6 +23,10 @@ export interface PublicServiceListQuery {
   sort: ServicePriceSort;
 }
 
+export interface AdminServiceListQuery extends PublicServiceListQuery {
+  status?: ServiceStatus;
+}
+
 const serviceFields = new Set([
   "serviceName",
   "category",
@@ -225,4 +229,26 @@ export function parsePublicServiceListQuery(value: unknown): PublicServiceListQu
     query.category = category;
   }
   return query;
+}
+
+
+export function parseAdminServiceListQuery(
+  value: unknown,
+): AdminServiceListQuery {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "Bad Request", "Invalid service list query.");
+  }
+
+  const { status, ...publicQuery } = value;
+
+  const query = parsePublicServiceListQuery(publicQuery);
+
+  if (status === undefined) {
+    return query;
+  }
+
+  return {
+    ...query,
+    status: readStatus(status),
+  };
 }
