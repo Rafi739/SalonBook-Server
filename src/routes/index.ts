@@ -1,3 +1,4 @@
+
 import { Router } from "express";
 import { authRouter } from "./auth.routes.js";
 import { appointmentRouter } from "./appointment.routes.js";
@@ -5,6 +6,7 @@ import { healthRouter } from "./health.routes.js";
 import { paymentRouter } from "./payment.routes.js";
 import { serviceRouter } from "./service.routes.js";
 import { userRouter } from "./user.routes.js";
+import { dashboardRouter } from "./dashboard.routes.js";
 
 const apiRouter = Router();
 
@@ -14,5 +16,6 @@ apiRouter.use("/appointments", appointmentRouter);
 apiRouter.use("/users", userRouter);
 apiRouter.use("/services", serviceRouter);
 apiRouter.use("/payments", paymentRouter);
+apiRouter.use("/dashboard", dashboardRouter);
 
 export { apiRouter };
