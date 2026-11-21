@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import type { NextFunction, Request, Response } from "express";
 import { test } from "node:test";
 import request from "supertest";
+
 import { app } from "../app.js";
-import { requireRole } from "../middlewares/auth.middleware.js";
+import {
+  requireAuth,
+  requireRole,
+} from "../middlewares/auth.middleware.js";
 
 function createAuthenticatedRequest(
   role: "customer" | "admin",
@@ -19,6 +23,8 @@ function createAuthenticatedRequest(
     },
   } as unknown as Request;
 }
+
+// API Authentication Tests
 
 test("GET /api/auth/me should reject requests without a token", async () => {
   const response = await request(app).get("/api/auth/me");
@@ -62,6 +68,8 @@ test("Unknown API routes should return 404", async () => {
   assert.equal(response.status, 404);
 });
 
+// Role Authorization Tests
+
 test("Customer should be rejected from admin-only middleware", () => {
   const middleware = requireRole("admin");
   const req = createAuthenticatedRequest("customer");
@@ -94,4 +102,51 @@ test("Admin should pass admin-only middleware", () => {
 
   assert.equal(nextCalls, 1);
   assert.equal(nextError, undefined);
+});
+
+test("requireRole should reject unauthenticated requests", () => {
+  const middleware = requireRole("admin");
+  const req = {} as Request;
+  let nextError: unknown;
+
+  middleware(req, {} as Response, (error?: unknown) => {
+    nextError = error;
+  });
+
+  assert.notEqual(nextError, undefined);
+});
+
+test("requireRole should allow multiple permitted roles", () => {
+  const middleware = requireRole("customer", "admin");
+  const req = createAuthenticatedRequest("customer");
+  let nextCalls = 0;
+  let nextError: unknown;
+
+  middleware(req, {} as Response, (error?: unknown) => {
+    nextCalls += 1;
+    nextError = error;
+  });
+
+  assert.equal(nextCalls, 1);
+  assert.equal(nextError, undefined);
+});
+
+test("requireRole should reject configuration without allowed roles", () => {
+  assert.throws(() => requireRole());
+});
+
+// Bearer Authentication Header Tests
+
+test("requireAuth should reject non-Bearer authorization headers", () => {
+  const req = {
+    get: () => "Basic invalid-token",
+  } as unknown as Request;
+
+  let nextError: unknown;
+
+  requireAuth(req, {} as Response, (error?: unknown) => {
+    nextError = error;
+  });
+
+  assert.notEqual(nextError, undefined);
 });
