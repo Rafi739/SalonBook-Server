@@ -1,3 +1,4 @@
+
 import Stripe from "stripe";
 import {
   MongoServerError,
@@ -5,17 +6,25 @@ import {
   type Filter,
   type WithId,
 } from "mongodb";
+
 import { getDatabaseCollections } from "../config/collections.js";
 import { withDatabaseTransaction } from "../config/database.js";
 import { getStripeConfiguration } from "../config/stripe.js";
+
 import type {
   AppointmentDocument,
   TransactionDocument,
   UserDocument,
 } from "../types/database.js";
+
 import type { AuthenticatedUser } from "../types/auth.js";
-import type { TransactionListResult, TransactionView } from "../types/payments.js";
+import type {
+  TransactionListResult,
+  TransactionView,
+} from "../types/payments.js";
+
 import type { TransactionListQuery } from "../validators/payment.validators.js";
+
 import { HttpError } from "../utils/http-error.js";
 import { toMinorCurrencyUnit } from "../utils/currency.js";
 
@@ -42,7 +51,9 @@ const appointmentProjection = {
   timeSlot: 1,
 } as const;
 
-function toTransactionView(transaction: TransactionWithId): TransactionView {
+function toTransactionView(
+  transaction: TransactionWithId,
+): TransactionView {
   return {
     id: transaction._id.toHexString(),
     appointmentId: transaction.appointmentId.toHexString(),
@@ -53,8 +64,13 @@ function toTransactionView(transaction: TransactionWithId): TransactionView {
   };
 }
 
-function getPagination(page: number, limit: number, total: number): TransactionListResult["pagination"] {
+function getPagination(
+  page: number,
+  limit: number,
+  total: number,
+): TransactionListResult["pagination"] {
   const totalPages = Math.ceil(total / limit);
+
   return {
     page,
     limit,
@@ -66,7 +82,11 @@ function getPagination(page: number, limit: number, total: number): TransactionL
 }
 
 function stripeFailure(): HttpError {
-  return new HttpError(502, "Payment Provider Error", "Stripe could not process the payment request.");
+  return new HttpError(
+    502,
+    "Payment Provider Error",
+    "Stripe could not process the payment request.",
+  );
 }
 
 async function findOwnedAppointment(
@@ -74,19 +94,41 @@ async function findOwnedAppointment(
   customerId: ObjectId,
 ): Promise<WithId<AppointmentDocument>> {
   const { appointments } = await getDatabaseCollections();
+
   const appointment = await appointments.findOne(
-    { _id: appointmentId, customerId },
-    { projection: appointmentProjection },
+    {
+      _id: appointmentId,
+      customerId,
+    },
+    {
+      projection: appointmentProjection,
+    },
   );
+
   if (appointment === null) {
-    throw new HttpError(404, "Not Found", "Appointment not found.");
+    throw new HttpError(
+      404,
+      "Not Found",
+      "Appointment not found.",
+    );
   }
+
   if (appointment.status !== "confirmed") {
-    throw new HttpError(409, "Conflict", "Only confirmed appointments can be paid.");
+    throw new HttpError(
+      409,
+      "Conflict",
+      "Only confirmed appointments can be paid.",
+    );
   }
+
   if (appointment.paymentStatus !== "unpaid") {
-    throw new HttpError(409, "Conflict", "This appointment is not eligible for payment.");
+    throw new HttpError(
+      409,
+      "Conflict",
+      "This appointment is not eligible for payment.",
+    );
   }
+
   return appointment;
 }
 
@@ -96,17 +138,25 @@ async function findOrReserveTransaction(
   currency: string,
 ): Promise<TransactionWithId> {
   const { transactions } = await getDatabaseCollections();
-  const existing = await transactions.findOne(
-    { appointmentId: appointment._id, status: "pending" },
-  );
+
+  const existing = await transactions.findOne({
+    appointmentId: appointment._id,
+    status: "pending",
+  });
+
   if (existing !== null) {
     if (
       !existing.customerId.equals(customerId) ||
       existing.amount !== appointment.servicePrice ||
       existing.currency !== currency
     ) {
-      throw new HttpError(409, "Conflict", "An existing payment attempt does not match this appointment.");
+      throw new HttpError(
+        409,
+        "Conflict",
+        "An existing payment attempt does not match this appointment.",
+      );
     }
+
     return existing;
   }
 
@@ -119,27 +169,43 @@ async function findOrReserveTransaction(
     status: "pending",
     createdAt: new Date(),
   };
+
   try {
     const result = await transactions.insertOne(document);
-    return { _id: result.insertedId, ...document };
+
+    return {
+      _id: result.insertedId,
+      ...document,
+    };
   } catch (error: unknown) {
-    if (!(error instanceof MongoServerError) || error.code !== 11000) {
+    if (
+      !(error instanceof MongoServerError) ||
+      error.code !== 11000
+    ) {
       throw error;
     }
+
     const concurrentTransaction = await transactions.findOne({
       appointmentId: appointment._id,
       status: "pending",
     });
+
     if (concurrentTransaction === null) {
       throw error;
     }
+
     if (
       !concurrentTransaction.customerId.equals(customerId) ||
       concurrentTransaction.amount !== appointment.servicePrice ||
       concurrentTransaction.currency !== currency
     ) {
-      throw new HttpError(409, "Conflict", "An existing payment attempt does not match this appointment.");
+      throw new HttpError(
+        409,
+        "Conflict",
+        "An existing payment attempt does not match this appointment.",
+      );
     }
+
     return concurrentTransaction;
   }
 }
@@ -149,47 +215,101 @@ async function createOrReuseCheckoutSession(
   customer: AuthenticatedUser,
 ): Promise<{ id: string; url: string }> {
   if (customer.role !== "customer") {
-    throw new HttpError(403, "Forbidden", "Only customers can initiate payments.");
+    throw new HttpError(
+      403,
+      "Forbidden",
+      "Only customers can initiate payments.",
+    );
   }
 
-  const { stripe, currency, clientUrl } = getStripeConfiguration();
+  const { stripe, currency, clientUrl } =
+    getStripeConfiguration();
+
   const customerId = new ObjectId(customer.id);
-  const ownedAppointment = await findOwnedAppointment(appointment._id, customerId);
-  const amount = toMinorCurrencyUnit(ownedAppointment.servicePrice, currency);
-  const { services, transactions } = await getDatabaseCollections();
+
+  const ownedAppointment = await findOwnedAppointment(
+    appointment._id,
+    customerId,
+  );
+
+  const amount = toMinorCurrencyUnit(
+    ownedAppointment.servicePrice,
+    currency,
+  );
+
+  const { services, transactions } =
+    await getDatabaseCollections();
+
   const service = await services.findOne(
-    { _id: ownedAppointment.serviceId },
-    { projection: { serviceName: 1 } },
+    {
+      _id: ownedAppointment.serviceId,
+    },
+    {
+      projection: {
+        serviceName: 1,
+      },
+    },
   );
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const transaction = await findOrReserveTransaction(ownedAppointment, customerId, currency);
+    const transaction = await findOrReserveTransaction(
+      ownedAppointment,
+      customerId,
+      currency,
+    );
+
     if (transaction.stripeSessionId !== null) {
       let existingSession: Stripe.Checkout.Session;
+
       try {
-        existingSession = await stripe.checkout.sessions.retrieve(transaction.stripeSessionId);
+        existingSession =
+          await stripe.checkout.sessions.retrieve(
+            transaction.stripeSessionId,
+          );
       } catch {
         throw stripeFailure();
       }
 
-      if (existingSession.status === "open" && existingSession.url !== null) {
-        return { id: existingSession.id, url: existingSession.url };
+      if (
+        existingSession.status === "open" &&
+        existingSession.url !== null
+      ) {
+        return {
+          id: existingSession.id,
+          url: existingSession.url,
+        };
       }
+
       if (existingSession.status === "expired") {
         await transactions.updateOne(
-          { _id: transaction._id, status: "pending" },
-          { $set: { status: "failed" } },
+          {
+            _id: transaction._id,
+            status: "pending",
+          },
+          {
+            $set: {
+              status: "failed",
+            },
+          },
         );
+
         continue;
       }
-      throw new HttpError(409, "Conflict", "This appointment already has a checkout session in progress.");
+
+      throw new HttpError(
+        409,
+        "Conflict",
+        "This appointment already has a checkout session in progress.",
+      );
     }
 
     let session: Stripe.Checkout.Session;
+
     try {
       session = await stripe.checkout.sessions.create(
         {
           mode: "payment",
+
           line_items: [
             {
               quantity: 1,
@@ -197,34 +317,49 @@ async function createOrReuseCheckoutSession(
                 currency,
                 unit_amount: amount,
                 product_data: {
-                  name: service?.serviceName ?? "SalonBook appointment",
+                  name:
+                    service?.serviceName ??
+                    "SalonBook appointment",
                 },
               },
             },
           ],
-          client_reference_id: ownedAppointment._id.toHexString(),
+
+          client_reference_id:
+            ownedAppointment._id.toHexString(),
+
           metadata: {
-            appointmentId: ownedAppointment._id.toHexString(),
+            appointmentId:
+              ownedAppointment._id.toHexString(),
             customerId: customerId.toHexString(),
-            transactionId: transaction._id.toHexString(),
+            transactionId:
+              transaction._id.toHexString(),
           },
+
           payment_intent_data: {
             metadata: {
-              appointmentId: ownedAppointment._id.toHexString(),
+              appointmentId:
+                ownedAppointment._id.toHexString(),
               customerId: customerId.toHexString(),
-              transactionId: transaction._id.toHexString(),
+              transactionId:
+                transaction._id.toHexString(),
             },
           },
+
           success_url: new URL(
             "/booking/payment/success?session_id={CHECKOUT_SESSION_ID}",
             clientUrl,
           ).toString(),
+
           cancel_url: new URL(
             `/booking/payment/cancel?appointmentId=${ownedAppointment._id.toHexString()}`,
             clientUrl,
           ).toString(),
         },
-        { idempotencyKey: `salonbook-checkout-${transaction._id.toHexString()}` },
+        {
+          idempotencyKey:
+            `salonbook-checkout-${transaction._id.toHexString()}`,
+        },
       );
     } catch {
       throw stripeFailure();
@@ -233,14 +368,31 @@ async function createOrReuseCheckoutSession(
     if (session.url === null) {
       throw stripeFailure();
     }
+
     await transactions.updateOne(
-      { _id: transaction._id, status: "pending", stripeSessionId: null },
-      { $set: { stripeSessionId: session.id } },
+      {
+        _id: transaction._id,
+        status: "pending",
+        stripeSessionId: null,
+      },
+      {
+        $set: {
+          stripeSessionId: session.id,
+        },
+      },
     );
-    return { id: session.id, url: session.url };
+
+    return {
+      id: session.id,
+      url: session.url,
+    };
   }
 
-  throw new HttpError(409, "Conflict", "A new checkout session could not be reserved.");
+  throw new HttpError(
+    409,
+    "Conflict",
+    "A new checkout session could not be reserved.",
+  );
 }
 
 export async function createCheckoutSession(
@@ -248,20 +400,44 @@ export async function createCheckoutSession(
   customer: AuthenticatedUser,
 ): Promise<{ id: string; url: string }> {
   const { appointments } = await getDatabaseCollections();
+
   const appointment = await appointments.findOne(
-    { _id: appointmentId },
-    { projection: appointmentProjection },
+    {
+      _id: appointmentId,
+    },
+    {
+      projection: appointmentProjection,
+    },
   );
+
   if (appointment === null) {
-    throw new HttpError(404, "Not Found", "Appointment not found.");
+    throw new HttpError(
+      404,
+      "Not Found",
+      "Appointment not found.",
+    );
   }
-  if (customer.role !== "customer" || !appointment.customerId.equals(new ObjectId(customer.id))) {
-    throw new HttpError(404, "Not Found", "Appointment not found.");
+
+  if (
+    customer.role !== "customer" ||
+    !appointment.customerId.equals(new ObjectId(customer.id))
+  ) {
+    throw new HttpError(
+      404,
+      "Not Found",
+      "Appointment not found.",
+    );
   }
-  return createOrReuseCheckoutSession(appointment, customer);
+
+  return createOrReuseCheckoutSession(
+    appointment,
+    customer,
+  );
 }
 
-function readSessionMetadata(session: Stripe.Checkout.Session): {
+function readSessionMetadata(
+  session: Stripe.Checkout.Session,
+): {
   appointmentId: ObjectId;
   customerId: ObjectId;
   transactionId: ObjectId;
@@ -269,6 +445,7 @@ function readSessionMetadata(session: Stripe.Checkout.Session): {
   const appointmentId = session.metadata?.appointmentId;
   const customerId = session.metadata?.customerId;
   const transactionId = session.metadata?.transactionId;
+
   if (
     appointmentId === undefined ||
     customerId === undefined ||
@@ -279,6 +456,7 @@ function readSessionMetadata(session: Stripe.Checkout.Session): {
   ) {
     return null;
   }
+
   return {
     appointmentId: new ObjectId(appointmentId),
     customerId: new ObjectId(customerId),
@@ -286,26 +464,46 @@ function readSessionMetadata(session: Stripe.Checkout.Session): {
   };
 }
 
-async function handleUnsuccessfulSession(session: Stripe.Checkout.Session): Promise<void> {
+async function handleUnsuccessfulSession(
+  session: Stripe.Checkout.Session,
+): Promise<void> {
   const metadata = readSessionMetadata(session);
+
   if (metadata === null) {
     return;
   }
+
   const { transactions } = await getDatabaseCollections();
+
   await transactions.updateOne(
     {
       _id: metadata.transactionId,
       appointmentId: metadata.appointmentId,
       customerId: metadata.customerId,
       status: "pending",
-      $or: [{ stripeSessionId: null }, { stripeSessionId: session.id }],
+      $or: [
+        {
+          stripeSessionId: null,
+        },
+        {
+          stripeSessionId: session.id,
+        },
+      ],
     },
-    { $set: { status: "failed", stripeSessionId: session.id } },
+    {
+      $set: {
+        status: "failed",
+        stripeSessionId: session.id,
+      },
+    },
   );
 }
 
-async function handleSuccessfulSession(session: Stripe.Checkout.Session): Promise<void> {
+async function handleSuccessfulSession(
+  session: Stripe.Checkout.Session,
+): Promise<void> {
   const metadata = readSessionMetadata(session);
+
   if (
     metadata === null ||
     session.mode !== "payment" ||
@@ -318,55 +516,106 @@ async function handleSuccessfulSession(session: Stripe.Checkout.Session): Promis
 
   const sessionCurrency = session.currency;
   const { currency } = getStripeConfiguration();
+
   await withDatabaseTransaction(async (dbSession) => {
-    const { appointments, transactions } = await getDatabaseCollections();
+    const { appointments, transactions } =
+      await getDatabaseCollections();
+
     const transaction = await transactions.findOne(
       {
         _id: metadata.transactionId,
         appointmentId: metadata.appointmentId,
         customerId: metadata.customerId,
-        $or: [{ stripeSessionId: null }, { stripeSessionId: session.id }],
+        $or: [
+          {
+            stripeSessionId: null,
+          },
+          {
+            stripeSessionId: session.id,
+          },
+        ],
       },
-      { session: dbSession },
+      {
+        session: dbSession,
+      },
     );
+
     if (transaction === null) {
       return;
     }
 
     const appointment = await appointments.findOne(
-      { _id: metadata.appointmentId, customerId: metadata.customerId },
-      { session: dbSession, projection: appointmentProjection },
+      {
+        _id: metadata.appointmentId,
+        customerId: metadata.customerId,
+      },
+      {
+        session: dbSession,
+        projection: appointmentProjection,
+      },
     );
+
     if (appointment === null) {
-      throw new HttpError(400, "Invalid Webhook", "Payment metadata did not match the appointment.");
+      throw new HttpError(
+        400,
+        "Invalid Webhook",
+        "Payment metadata did not match the appointment.",
+      );
     }
 
-    const expectedAmount = toMinorCurrencyUnit(appointment.servicePrice, currency);
+    const expectedAmount = toMinorCurrencyUnit(
+      appointment.servicePrice,
+      currency,
+    );
+
     if (
       transaction.amount !== appointment.servicePrice ||
       transaction.currency !== currency ||
       sessionCurrency.toLowerCase() !== currency ||
       session.amount_total !== expectedAmount
     ) {
-      throw new HttpError(400, "Invalid Webhook", "Payment details did not match the expected amount.");
+      throw new HttpError(
+        400,
+        "Invalid Webhook",
+        "Payment details did not match the expected amount.",
+      );
     }
 
-    if (transaction.status === "completed" && appointment.paymentStatus === "paid") {
+    if (
+      transaction.status === "completed" &&
+      appointment.paymentStatus === "paid"
+    ) {
       return;
     }
-    if (transaction.status !== "pending" && transaction.status !== "completed") {
+
+    if (
+      transaction.status !== "pending" &&
+      transaction.status !== "completed"
+    ) {
       return;
     }
 
     if (appointment.paymentStatus !== "paid") {
       if (appointment.status !== "confirmed") {
         await transactions.updateOne(
-          { _id: transaction._id, status: "pending" },
-          { $set: { status: "failed", stripeSessionId: session.id } },
-          { session: dbSession },
+          {
+            _id: transaction._id,
+            status: "pending",
+          },
+          {
+            $set: {
+              status: "failed",
+              stripeSessionId: session.id,
+            },
+          },
+          {
+            session: dbSession,
+          },
         );
+
         return;
       }
+
       const appointmentUpdate = await appointments.updateOne(
         {
           _id: appointment._id,
@@ -374,39 +623,94 @@ async function handleSuccessfulSession(session: Stripe.Checkout.Session): Promis
           status: "confirmed",
           paymentStatus: "unpaid",
         },
-        { $set: { paymentStatus: "paid", updatedAt: new Date() } },
-        { session: dbSession },
+        {
+          $set: {
+            paymentStatus: "paid",
+            updatedAt: new Date(),
+          },
+        },
+        {
+          session: dbSession,
+        },
       );
+
       if (appointmentUpdate.matchedCount !== 1) {
-        throw new HttpError(409, "Conflict", "Appointment payment state changed during confirmation.");
+        throw new HttpError(
+          409,
+          "Conflict",
+          "Appointment payment state changed during confirmation.",
+        );
       }
     }
 
     const transactionUpdate = await transactions.updateOne(
       {
         _id: transaction._id,
-        status: { $in: ["pending", "completed"] },
-        $or: [{ stripeSessionId: null }, { stripeSessionId: session.id }],
+        status: {
+          $in: ["pending", "completed"],
+        },
+        $or: [
+          {
+            stripeSessionId: null,
+          },
+          {
+            stripeSessionId: session.id,
+          },
+        ],
       },
-      { $set: { status: "completed", stripeSessionId: session.id } },
-      { session: dbSession },
+      {
+        $set: {
+          status: "completed",
+          stripeSessionId: session.id,
+        },
+      },
+      {
+        session: dbSession,
+      },
     );
+
     if (transactionUpdate.matchedCount !== 1) {
-      throw new HttpError(409, "Conflict", "Payment transaction state changed during confirmation.");
+      throw new HttpError(
+        409,
+        "Conflict",
+        "Payment transaction state changed during confirmation.",
+      );
     }
   });
 }
 
-export async function processStripeWebhook(rawBody: Buffer, signature: string | undefined): Promise<void> {
-  if (signature === undefined || signature.trim() === "") {
-    throw new HttpError(400, "Invalid Webhook", "A Stripe signature is required.");
+export async function processStripeWebhook(
+  rawBody: Buffer,
+  signature: string | undefined,
+): Promise<void> {
+  if (
+    signature === undefined ||
+    signature.trim() === ""
+  ) {
+    throw new HttpError(
+      400,
+      "Invalid Webhook",
+      "A Stripe signature is required.",
+    );
   }
-  const { stripe, webhookSecret } = getStripeConfiguration();
+
+  const { stripe, webhookSecret } =
+    getStripeConfiguration();
+
   let event: Stripe.Event;
+
   try {
-    event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+    event = stripe.webhooks.constructEvent(
+      rawBody,
+      signature,
+      webhookSecret,
+    );
   } catch {
-    throw new HttpError(400, "Invalid Webhook", "Stripe webhook signature verification failed.");
+    throw new HttpError(
+      400,
+      "Invalid Webhook",
+      "Stripe webhook signature verification failed.",
+    );
   }
 
   switch (event.type) {
@@ -414,10 +718,12 @@ export async function processStripeWebhook(rawBody: Buffer, signature: string | 
     case "checkout.session.async_payment_succeeded":
       await handleSuccessfulSession(event.data.object);
       return;
+
     case "checkout.session.expired":
     case "checkout.session.async_payment_failed":
       await handleUnsuccessfulSession(event.data.object);
       return;
+
     default:
       return;
   }
@@ -427,20 +733,64 @@ async function toAdminTransactionViews(
   transactions: TransactionWithId[],
 ): Promise<TransactionView[]> {
   const results = transactions.map(toTransactionView);
+
   if (transactions.length === 0) {
     return results;
   }
-  const { appointments, users } = await getDatabaseCollections();
-  const [appointmentDocuments, userDocuments] = await Promise.all([
-    appointments.find(
-      { _id: { $in: [...new Set(transactions.map((transaction) => transaction.appointmentId.toHexString()))].map((id) => new ObjectId(id)) } },
-      { projection: { _id: 1, appointmentDate: 1, timeSlot: 1, status: 1 } },
-    ).toArray(),
-    users.find(
-      { _id: { $in: [...new Set(transactions.map((transaction) => transaction.customerId.toHexString()))].map((id) => new ObjectId(id)) } },
-      { projection: { _id: 1, name: 1, email: 1 } },
-    ).toArray(),
-  ]);
+
+  const { appointments, users } =
+    await getDatabaseCollections();
+
+  const appointmentIds = [
+    ...new Set(
+      transactions.map((transaction) =>
+        transaction.appointmentId.toHexString(),
+      ),
+    ),
+  ].map((id) => new ObjectId(id));
+
+  const customerIds = [
+    ...new Set(
+      transactions.map((transaction) =>
+        transaction.customerId.toHexString(),
+      ),
+    ),
+  ].map((id) => new ObjectId(id));
+
+  const [appointmentDocuments, userDocuments] =
+    await Promise.all([
+      appointments.find(
+        {
+          _id: {
+            $in: appointmentIds,
+          },
+        },
+        {
+          projection: {
+            _id: 1,
+            appointmentDate: 1,
+            timeSlot: 1,
+            status: 1,
+          },
+        },
+      ).toArray(),
+
+      users.find(
+        {
+          _id: {
+            $in: customerIds,
+          },
+        },
+        {
+          projection: {
+            _id: 1,
+            name: 1,
+            email: 1,
+          },
+        },
+      ).toArray(),
+    ]);
+
   const appointmentMap = new Map(
     appointmentDocuments.map((appointment) => [
       appointment._id.toHexString(),
@@ -452,23 +802,37 @@ async function toAdminTransactionViews(
       },
     ]),
   );
+
   const customerMap = new Map(
-    userDocuments.map((customer: WithId<UserDocument>) => [
-      customer._id.toHexString(),
-      {
-        id: customer._id.toHexString(),
-        name: customer.name,
-        email: customer.email,
-      },
-    ]),
+    userDocuments.map(
+      (customer: WithId<UserDocument>) => [
+        customer._id.toHexString(),
+        {
+          id: customer._id.toHexString(),
+          name: customer.name,
+          email: customer.email,
+        },
+      ],
+    ),
   );
+
   return results.map((result, index) => {
     const transaction = transactions[index];
+
     if (transaction === undefined) {
       return result;
     }
-    result.customer = customerMap.get(transaction.customerId.toHexString()) ?? null;
-    result.appointment = appointmentMap.get(transaction.appointmentId.toHexString()) ?? null;
+
+    result.customer =
+      customerMap.get(
+        transaction.customerId.toHexString(),
+      ) ?? null;
+
+    result.appointment =
+      appointmentMap.get(
+        transaction.appointmentId.toHexString(),
+      ) ?? null;
+
     return result;
   });
 }
@@ -478,37 +842,69 @@ async function listTransactions(
   customerId?: ObjectId,
 ): Promise<TransactionListResult> {
   const { transactions } = await getDatabaseCollections();
+
   const filter: Filter<TransactionDocument> = {};
+
   if (customerId !== undefined) {
     filter.customerId = customerId;
   }
+
   if (query.status !== undefined) {
     filter.status = query.status;
   }
-  if (query.dateFrom !== undefined || query.dateTo !== undefined) {
+
+  if (
+    query.dateFrom !== undefined ||
+    query.dateTo !== undefined
+  ) {
     filter.createdAt = {
-      ...(query.dateFrom === undefined ? {} : { $gte: query.dateFrom }),
+      ...(query.dateFrom === undefined
+        ? {}
+        : {
+            $gte: query.dateFrom,
+          }),
+
       ...(query.dateTo === undefined
         ? {}
-        : { $lte: new Date(query.dateTo.getTime() + 24 * 60 * 60 * 1000 - 1) }),
+        : {
+            $lte: new Date(
+              query.dateTo.getTime() +
+                24 * 60 * 60 * 1000 -
+                1,
+            ),
+          }),
     };
   }
 
   const skip = (query.page - 1) * query.limit;
+
   const [documents, total] = await Promise.all([
     transactions
-      .find(filter, { projection: transactionSafeProjection })
-      .sort({ createdAt: -1, _id: -1 })
+      .find(filter, {
+        projection: transactionSafeProjection,
+      })
+      .sort({
+        createdAt: -1,
+        _id: -1,
+      })
       .skip(skip)
       .limit(query.limit)
       .toArray(),
+
     transactions.countDocuments(filter),
   ]);
+
   return {
-    transactions: customerId === undefined
-      ? await toAdminTransactionViews(documents)
-      : documents.map(toTransactionView),
-    pagination: getPagination(query.page, query.limit, total),
+    transactions:
+      customerId === undefined
+        ? await toAdminTransactionViews(documents)
+        : documents.map(toTransactionView),
+
+    pagination: getPagination(
+      query.page,
+      query.limit,
+      total,
+    ),
   };
 }
 
@@ -516,9 +912,22 @@ export function listCustomerTransactions(
   customerId: string,
   query: Pick<TransactionListQuery, "page" | "limit">,
 ): Promise<TransactionListResult> {
-  return listTransactions(query, new ObjectId(customerId));
+  if (!ObjectId.isValid(customerId)) {
+    throw new HttpError(
+      400,
+      "Bad Request",
+      "Invalid customer ID.",
+    );
+  }
+
+  return listTransactions(
+    query,
+    new ObjectId(customerId),
+  );
 }
 
-export function listAdminTransactions(query: TransactionListQuery): Promise<TransactionListResult> {
+export function listAdminTransactions(
+  query: TransactionListQuery,
+): Promise<TransactionListResult> {
   return listTransactions(query);
 }

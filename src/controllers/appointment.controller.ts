@@ -50,10 +50,13 @@ export const listAppointmentsController = asyncHandler(async (request, response)
   response.status(200).json(result);
 });
 
+
 export const updateAppointmentStatusController = asyncHandler(async (request, response) => {
   const admin = getRequestUser(request);
   const appointmentId = parseMongoObjectId(request.params.id, "appointment");
   const status = validateAppointmentStatus(request.body);
+
   const appointment = await updateAppointmentStatus(appointmentId, status, admin);
+
   response.status(200).json({ appointment });
 });
