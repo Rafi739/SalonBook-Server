@@ -12,7 +12,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
-    "test": "node --import tsx --test src/tests/app.test.ts src/tests/validators.test.ts"
+    "test": "node --import tsx --test src/tests/app.test.ts src/tests/validators.test.ts src/tests/user-service.validators.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
